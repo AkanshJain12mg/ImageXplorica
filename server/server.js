@@ -1,33 +1,60 @@
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const { exec } = require("child_process");
 const path = require("path");
-const imageRoutes = require("./routes/imageroutes");
+const fs = require("fs");
 
 const app = express();
+const PORT = 5000;
 
-// Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
 
-// Serve static files from the uploads directory
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Ensure folders exist
+const uploadDir = path.join(__dirname, "uploads");
+const processedDir = path.join(__dirname, "processed");
 
-// Use the image routes
-app.use("/api", imageRoutes);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+if (!fs.existsSync(processedDir)) fs.mkdirSync(processedDir);
 
-// Test route
-app.get("/test", (req, res) => {
-  res.send("Test route is working!");
+//  Multer config with original extension
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname); 
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, uniqueName);
+  },
+});
+const upload = multer({ storage });
+
+//route for histogram processing
+app.post("/api/histogram", upload.single("image"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).send("No file uploaded.");
+  }
+
+  const uploadedPath = path.join(uploadDir, req.file.filename);
+  const outputPath = path.join(processedDir, `${req.file.filename.split(".")[0]}_hist.png`);
+
+  console.log("📥 Uploaded:", uploadedPath);
+  console.log("⚙️  Processing output path:", outputPath);
+
+  //  Python script with file paths
+  exec(`python scripts/histogram.py "${uploadedPath}" "${outputPath}"`, (err, stdout, stderr) => {
+    if (err) {
+      console.error(" Python script error:", stderr);
+      return res.status(500).send("Error processing image.");
+    }
+
+    console.log(" Processed image sent:", outputPath);
+    res.sendFile(outputPath);
+  });
 });
 
-// Root route
-app.get("/", (req, res) => {
-  res.send("Server is running!");
-});
-
-// Start the server
-const PORT = process.env.PORT || 3000; // Change to 3000 or another port
+// Start server
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(` Server running at http://localhost:${PORT}`);
 });
